@@ -58,11 +58,11 @@ class KerasSteganoGAN(tf.keras.Model):
     self.loss_fn           = loss_fn or BinaryCrossentropy(from_logits=False)
 
   @tf.function 
-  def call(self, inputs, training=False):
+  def call(self, inputs):
     cover_image, message = inputs
     
-    stego_image = self.encoder([cover_image, message], training=training)
-    recovered_message = self.decoder(stego_image, training=training)
+    stego_image = self.encoder([cover_image, message])
+    recovered_message = self.decoder(stego_image)
 
     return stego_image, recovered_message
 
@@ -143,8 +143,8 @@ class KerasSteganoGAN(tf.keras.Model):
   def test_step(self, data):
     cover_image, message = data
 
-    stego_image = self.encoder([cover_image, message], training=False)
-    recovered_message = self.decoder(stego_image, training=False)
+    stego_image = self.encoder([cover_image, message])
+    recovered_message = self.decoder(stego_image)
 
     encoder_decoder_total_loss, similarity_loss, decoder_loss, realism_loss = self.endoder_decoder_loss(cover_image, stego_image, message, recovered_message)
     decoder_accuracy = self.decoder_accuracy(message, recovered_message)
