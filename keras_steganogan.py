@@ -3,7 +3,7 @@ os.environ["KERAS_BACKEND"] = "tensorflow"
 
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.losses import BinaryCrossentropy
+from tensorflow.keras.losses import BinaryCrossentropy, MeanSquaredError
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import Mean
 from imageio.v2 import imread, imwrite
@@ -12,7 +12,7 @@ from utils import text_to_bits, bits_to_text
 
 
 class KerasSteganoGAN(tf.keras.Model):
-  def __init__(self, encoder=None, decoder=None, critic=None, data_depth=1):
+  def __init__(self, encoder=None, decoder=None, critic=None, data_depth=6):
     super(KerasSteganoGAN, self).__init__()
     
     self.data_depth = data_depth
@@ -21,7 +21,7 @@ class KerasSteganoGAN(tf.keras.Model):
     self.decoder = decoder or steganogan_decoder_dense_model(data_depth)
     self.critic  = critic or steganogan_critic_model()
 
-    self.encoder_decoder_total_loss_tracker = Mean(name="encoder_decoder_total_loss")   
+    self.encoder_decoder_total_loss_tracker = Mean(name="encoder_decoder_total_loss")
     self.critic_loss_tracker = Mean(name="critic_loss")
     self.similarity_loss_tracker = Mean(name="similarity_loss")
     self.decoder_loss_tracker = Mean(name="decoder_loss")
@@ -50,37 +50,22 @@ class KerasSteganoGAN(tf.keras.Model):
     self.encoder.summary()
     self.decoder.summary()
 
-  def compile(self, encoder_optimizer, decoder_optimizer, critic_optimizer, loss_fn):
+  def compile(self, encoder_optimizer, decoder_optimizer, critic_optimizer, similarity_loss_fn, decoder_loss_fn):
     super(KerasSteganoGAN, self).compile()
-    self.encoder_optimizer = encoder_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
-    self.decoder_optimizer = decoder_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
-    self.critic_optimizer  = critic_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
-    self.loss_fn           = loss_fn or BinaryCrossentropy(from_logits=False)
+    self.encoder_optimizer  = encoder_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
+    self.decoder_optimizer  = decoder_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
+    self.critic_optimizer   = critic_optimizer or Adam(learning_rate=1e-4, beta_1=0.5)
+    self.similarity_loss_fn = similarity_loss_fn or MeanSquaredError()
+    self.decoder_loss_fn    = decoder_loss_fn or BinaryCrossentropy(from_logits=False)
 
   @tf.function 
   def call(self, inputs):
     cover_image, message = inputs
     
-    stego_image = self.encoder([cover_image, message])
-    recovered_message = self.decoder(stego_image)
+    stego_image = self.encoder([cover_image, message], training=False)
+    recovered_message = self.decoder(stego_image, training=False)
 
     return stego_image, recovered_message
-
-  @tf.function
-  def critic_loss(self, cover_image, stego_image):
-    cover_critic_score = self.critic(cover_image)
-    stego_critic_score = self.critic(stego_image)
-    return cover_critic_score - stego_critic_score
-
-  @tf.function
-  def endoder_decoder_loss(self, cover_image, stego_image, message, recovered_message):
-    similarity_loss = tf.reduce_mean(tf.square(cover_image - stego_image))
-    decoder_loss = self.loss_fn(message, recovered_message)
-    realism_loss = self.critic(stego_image)
-
-    total_loss = similarity_loss + decoder_loss + realism_loss
-
-    return total_loss, similarity_loss, decoder_loss, realism_loss
 
   @tf.function
   def decoder_accuracy(self, message, recovered_message):
@@ -93,18 +78,24 @@ class KerasSteganoGAN(tf.keras.Model):
 
     return decoder_accuracy
 
-
   @tf.function
   def train_step(self, data):
     cover_image, message = data
 
     with tf.GradientTape() as encoder_tape, tf.GradientTape() as decoder_tape, tf.GradientTape() as critic_tape:
-      stego_image = self.encoder([cover_image, message])
-      recovered_message = self.decoder(stego_image)
+      stego_image = self.encoder([cover_image, message], training=True)
+      recovered_message = self.decoder(stego_image, training=True)
 
-      encoder_decoder_total_loss, similarity_loss, decoder_loss, realism_loss = self.endoder_decoder_loss(cover_image, stego_image, message, recovered_message)
       decoder_accuracy = self.decoder_accuracy(message, recovered_message)
-      critic_loss = self.critic_loss(cover_image, stego_image)
+
+      similarity_loss = self.similarity_loss_fn(cover_image, stego_image)
+      decoder_loss = self.decoder_loss_fn(message, recovered_message)
+      realism_loss = self.critic(stego_image, training=True)
+      encoder_decoder_total_loss = similarity_loss + decoder_loss + realism_loss
+
+      cover_critic_score = self.critic(cover_image, training=True)
+      stego_critic_score = self.critic(stego_image, training=True)
+      critic_loss = cover_critic_score - stego_critic_score
 
     encoder_grads = encoder_tape.gradient(encoder_decoder_total_loss, self.encoder.trainable_variables)
     decoder_grads = decoder_tape.gradient(encoder_decoder_total_loss, self.decoder.trainable_variables)
@@ -143,12 +134,19 @@ class KerasSteganoGAN(tf.keras.Model):
   def test_step(self, data):
     cover_image, message = data
 
-    stego_image = self.encoder([cover_image, message])
-    recovered_message = self.decoder(stego_image)
+    stego_image = self.encoder([cover_image, message], training=False)
+    recovered_message = self.decoder(stego_image, training=False)
 
-    encoder_decoder_total_loss, similarity_loss, decoder_loss, realism_loss = self.endoder_decoder_loss(cover_image, stego_image, message, recovered_message)
     decoder_accuracy = self.decoder_accuracy(message, recovered_message)
-    critic_loss = self.critic_loss(cover_image, stego_image)
+
+    similarity_loss = self.similarity_loss_fn(cover_image, stego_image)
+    decoder_loss = self.decoder_loss_fn(message, recovered_message)
+    realism_loss = self.critic(stego_image, training=False)
+    encoder_decoder_total_loss = similarity_loss + decoder_loss + realism_loss
+
+    cover_critic_score = self.critic(cover_image, training=False)
+    stego_critic_score = self.critic(stego_image, training=False)
+    critic_loss = cover_critic_score - stego_critic_score
 
     self.encoder_decoder_total_loss_tracker.update_state(encoder_decoder_total_loss)
     self.critic_loss_tracker.update_state(critic_loss)
