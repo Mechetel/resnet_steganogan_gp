@@ -24,8 +24,6 @@ class SaveImages(keras.callbacks.Callback):
         self.save_to = save_to
 
     def on_epoch_end(self, epoch, logs=None):
-        epoch = epoch + 1
-
         image_array = np.full((
             self.margin + (self.num_rows * (128 + self.margin)),
             self.margin + (self.num_cols * (128 + self.margin)), 3),
@@ -64,7 +62,7 @@ class SaveImages(keras.callbacks.Callback):
         message = np.reshape(message, (1, cover_tensor.shape[1], cover_tensor.shape[2], self.data_depth)) 
         message = tf.convert_to_tensor(message, dtype=tf.float32)
 
-        stego_tensor = self.model.encoder([cover_tensor, message])
+        stego_tensor = self.model.encoder([cover_tensor, message], training=False)
         stego_image = tf.squeeze(stego_tensor)
         stego_image = (stego_image + 1.0) * 127.5
         stego_image = tf.cast(stego_image, tf.uint32)
@@ -83,7 +81,7 @@ class SaveImages(keras.callbacks.Callback):
         message = np.reshape(message, (1, self.width, self.height, self.data_depth)) 
         message = tf.convert_to_tensor(message, dtype=tf.float32)
 
-        stego_tensor = self.model.encoder([cover_tensor, message])
+        stego_tensor = self.model.encoder([cover_tensor, message], training=False)
         stego_image = tf.squeeze(stego_tensor)
         stego_image = (stego_image + 1.0) * 127.5
         stego_image = tf.cast(stego_image, tf.uint32)

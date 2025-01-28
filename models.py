@@ -1,15 +1,15 @@
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, BatchNormalization, AveragePooling2D, Conv2D, LeakyReLU
-from tensorflow.keras.layers import Add, Concatenate, Lambda, Activation, Layer
+from tensorflow.keras.layers import Add, Concatenate, Lambda, Activation, Layer, Flatten
 from tensorflow.keras.activations import sigmoid, tanh
 
 
-def steganogan_encoder_basic_model(D):
+def BasicEncoder(D):
     """
     The BasicEncoder module takes an cover image and a data tensor and combines
     them into a steganographic image.
-    Input: (N, 3, H, W), (N, D, H, W)
+    Input: (N, 3, H, W), (N, H, W, D)
     Output: (N, 3, H, W)
     """
     Cover = Input(shape=(None, None, 3), name=f'cover_image')
@@ -27,15 +27,15 @@ def steganogan_encoder_basic_model(D):
 
     Encoder_d = Conv2D(3, kernel_size=3, padding='same', activation=tanh, name='Encoder_conv_tanh')(c)
     
-    model = Model(inputs=[Cover, Message], outputs=Encoder_d, name='KerasSteganoGAN_basic_encoder')
+    model = Model(inputs=[Cover, Message], outputs=Encoder_d, name='ResnetSteganoGAN_basic_encoder')
     return model
 
-def steganogan_encoder_residual_model(D):
+def ResidualEncoder(D):
     """
     The ResidualEncoder module takes an cover image and a data tensor and combines
     them into a steganographic image.
-    Input: (N, 3, H, W), (N, D, H, W)
-    Output: (N, 3, H, W)
+    Input: (N, H, W, 3), (N, H, W, D)
+    Output: (N, H, W, 3)
     """
     Cover = Input(shape=(None, None, 3), name=f'cover_image')
     Message = Input(shape=(None, None, D), name=f'message_data')
@@ -55,15 +55,14 @@ def steganogan_encoder_residual_model(D):
     Encoder_d = Add(name='add_C_d')([Cover, d])
     Encoder_d = Activation(tanh, name='Encoder_activation_tanh')(Encoder_d)
     
-    model = Model(inputs=[Cover, Message], outputs=Encoder_d, name='KerasSteganoGAN_residual_encoder')
-    return model
+    return Model(inputs=[Cover, Message], outputs=Encoder_d, name='ResnetSteganoGAN_residual_encoder')
 
-def steganogan_encoder_dense_model(D):
+def DenseEncoder(D):
     """
     The DenseEncoder module takes an cover image and a data tensor and combines
     them into a steganographic image.
-    Input: (N, 3, H, W), (N, D, H, W)
-    Output: (N, 3, H, W)
+    Input: (N, H, W, 3), (N, H, W, D)
+    Output: (N, H, W, 3)
     """
     Cover = Input(shape=(None, None, 3), name=f'cover_image')
     Message = Input(shape=(None, None, D), name=f'message_data')
@@ -85,15 +84,14 @@ def steganogan_encoder_dense_model(D):
     Encoder_d = Add(name='add_C_d')([Cover, d])
     Encoder_d = Activation(tanh, name='Encoder_activation_tanh')(Encoder_d)
     
-    model = Model(inputs=[Cover, Message], outputs=Encoder_d, name='KerasSteganoGAN_dense_encoder')
-    return model
+    return Model(inputs=[Cover, Message], outputs=Encoder_d, name='ResnetSteganoGAN_dense_encoder')
 
-def steganogan_decoder_basic_model(D):
+def BasicDecoder(D):
     """
     The BasicDecoder module takes an steganographic image and attempts to decode
     the embedded data tensor.
-    Input: (N, 3, H, W)
-    Output: (N, D, H, W)
+    Input: (N, H, W, 3)
+    Output: (N, H, W, D)
     """
     Cover = Input(shape=(None, None, 3), name=f'cover_image')
     
@@ -108,15 +106,14 @@ def steganogan_decoder_basic_model(D):
 
     Decoder = Conv2D(D, kernel_size=3, padding='same', activation=sigmoid, name='Decoder_conv_sigmoid')(c)
 
-    model = Model(inputs=Cover, outputs=Decoder, name='KerasSteganoGAN_basic_decoder')
-    return model
+    return Model(inputs=Cover, outputs=Decoder, name='ResnetSteganoGAN_basic_decoder')
 
-def steganogan_decoder_dense_model(D):
+def DenseDecoder(D):
     """
     The DenseDecoder module takes an steganographic image and attempts to decode
     the embedded data tensor.
-    Input: (N, 3, H, W)
-    Output: (N, D, H, W)
+    Input: (N, H, W, 3)
+    Output: (N, H, W, D)
     """
     Cover = Input(shape=(None, None, 3), name=f'cover_image')
     
@@ -133,34 +130,20 @@ def steganogan_decoder_dense_model(D):
     Decoder_concatenate = Concatenate(name='Decoder_concatenate')([a, b, c])
     Decoder = Conv2D(D, kernel_size=3, padding='same', activation=sigmoid, name='Decoder_conv_sigmoid')(Decoder_concatenate)
 
-    model = Model(inputs=Cover, outputs=Decoder, name='KerasSteganoGAN_dense_decoder')
-    return model
+    return Model(inputs=Cover, outputs=Decoder, name='ResnetSteganoGAN_dense_decoder')
 
-class MeanLayer(Layer):
-    def call(self, inputs):
-        return tf.reduce_mean(inputs)
-
-def steganogan_critic_model():
+def Critic():
     """
     The Critic module takes an image and predicts whether it is a cover
     image or a steganographic image (N, 1).
-    Input: (N, 3, H, W)
+    Input: (N, H, W, 3)
     Output: (N, 1)
     """
     Stego = Input(shape=(None, None, 3), name=f'stego_image')
 
     a = Conv2D(32, kernel_size=3, padding='same', activation=LeakyReLU(), name='a_conv_1')(Stego)
-    a = BatchNormalization(name='a_normalize_1')(a)
-
     a = Conv2D(32, kernel_size=3, padding='same', activation=LeakyReLU(), name='a_conv_2')(a)
-    a = BatchNormalization(name='a_normalize_2')(a)
-
     a = Conv2D(32, kernel_size=3, padding='same', activation=LeakyReLU(), name='a_conv_3')(a)
-    a = BatchNormalization(name='a_normalize_3')(a)
+    score = Conv2D(1, kernel_size=3, padding='same', name='a_conv_4')(a)
 
-    x = Conv2D(1, kernel_size=3, padding='same', name='a_conv_4')(a)
-
-    mean = MeanLayer()(x)
-    
-    model = Model(inputs=Stego, outputs=mean, name='KerasSteganoGAN_critic')
-    return model
+    return Model(inputs=Stego, outputs=score, name='ResnetSteganoGAN_critic')
